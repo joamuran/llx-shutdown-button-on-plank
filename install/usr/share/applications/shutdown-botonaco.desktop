@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Shutdown Button
+Exec=quit-session
+Icon=gnome-logout
+Terminal=false
+Type=Application
+StartupNotify=true
+#NoDisplay=False
+OnlyShowIn=MATE;
+

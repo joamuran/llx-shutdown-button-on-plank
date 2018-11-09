@@ -1,0 +1,376 @@
+#!/usr/bin/env python
+
+import gi
+gi.require_version('Gtk', '3.0')
+
+from gi.repository import Gtk, GObject,GLib
+import dbus
+
+import threading
+import time
+import os
+
+import signal
+signal.signal(signal.SIGINT,signal.SIG_DFL)
+
+import gettext
+gettext.textdomain('lliurex-session-manager')
+_ = gettext.gettext
+
+
+
+RSRC_PATH="/usr/share/lliurex-session-manager/rsrc/"
+GLADE_FILE=RSRC_PATH+"lliurex-session-manager.ui"
+SUSPEND_RSRC=RSRC_PATH+"system-suspend.svg"
+HIBERNATE_RSRC=RSRC_PATH+"system-suspend-hibernate.svg"
+LOGOUT_RSRC=RSRC_PATH+"system-log-out.svg"
+REBOOT_RSRC=RSRC_PATH+"system-reboot.svg"
+SHUTDOWN_RSRC=RSRC_PATH+"system-shutdown.svg"
+
+
+class LliurexSessionManager:
+	
+	def __init__(self):
+		
+		self.max_seconds=15.0
+		self.current_second=0
+		self.progress_txt=("%s will %s in %s seconds...")
+		self.can_suspend=True
+		self.can_hibernate=True
+		self.can_switch=True
+		self.handler_id=None
+		
+		#DBUS INIT
+		self.dbus_connections_init()
+		#GTK INIT
+		self.start_gui()
+		
+		
+	#def init
+	
+	def dbus_connections_init(self):
+		
+		self.session_bus=dbus.SessionBus()
+		self.system_bus=dbus.SystemBus()
+		self.sessman = self.session_bus.get_object("org.gnome.SessionManager","/org/gnome/SessionManager")
+		self.lockman = self.session_bus.get_object("org.mate.ScreenSaver","/org/mate/ScreenSaver")
+		try:
+			display_obj = self.system_bus.get_object("org.freedesktop.DisplayManager","/org/freedesktop/DisplayManager/Seat0")
+			self.displayman = dbus.Interface(display_obj,"org.freedesktop.DisplayManager.Seat")
+			try:
+				type_client=os.environ["LTSP_FATCLIENT"].split(":")[0]
+				if type_client=='false':
+					self.can_switch=False
+			except:
+				pass	
+			
+		except:
+			self.can_switch=False	
+		login_obj=self.system_bus.get_object("org.freedesktop.login1","/org/freedesktop/login1")
+		self.sysman=dbus.Interface(login_obj,"org.freedesktop.login1.Manager")
+		if self.sysman.CanSuspend()!="yes":
+			self.can_suspend=False
+		if self.sysman.CanHibernate()!="yes":
+			self.can_hibernate=False
+		
+		
+	#def dbus_connections_init
+	
+	def start_gui(self):
+		
+		builder=Gtk.Builder()
+		builder.set_translation_domain('lliurex-session-manager')
+		builder.add_from_file(GLADE_FILE)
+		
+		self.main_window=builder.get_object("window2")
+		self.main_box=builder.get_object("main_box")
+		self.session_box=builder.get_object("session_box")
+		self.action_box=builder.get_object("action_box")
+		self.progressbar=builder.get_object("progressbar")
+		self.progressbar.set_show_text(True)
+		
+		self.stack=Gtk.Stack()
+		self.stack.set_transition_duration(500)
+		self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT)
+		self.stack.add_titled(self.session_box,"options","Session Options")
+		self.stack.add_titled(self.action_box,"action", "Execute option")
+		self.main_box.pack_start(self.stack,True,True,0)
+		
+		
+		self.lock_button=builder.get_object("lock_button")
+		self.logout_button=builder.get_object("logout_button")
+		self.switch_button=builder.get_object("switch_button")
+		
+		self.suspend_button=builder.get_object("suspend_button")
+		self.hibernate_button=builder.get_object("hibernate_button")
+		self.reboot_button=builder.get_object("reboot_button")
+		self.shutdown_button=builder.get_object("shutdown_button")
+		self.cancel_button=builder.get_object("cancel_button")
+		self.back_button=builder.get_object("back_button")
+		
+		self.current_action_image=builder.get_object("current_action_image")
+		self.current_action_label=builder.get_object("current_action_label")
+		self.execute_now_button=builder.get_object("execute_now_button")
+		
+		
+		
+		
+		self.lock_button.connect("clicked",self.lock_clicked)
+		self.logout_button.connect("clicked",self.logout_clicked)
+		self.switch_button.connect("clicked",self.switch_clicked)
+		
+		self.suspend_button.connect("clicked",self.suspend_clicked)
+		self.hibernate_button.connect("clicked",self.hibernate_clicked)
+		self.reboot_button.connect("clicked",self.reboot_clicked)
+		self.shutdown_button.connect("clicked",self.shutdown_clicked)
+		
+		self.cancel_button.connect("clicked",self.exit)
+		self.back_button.connect("clicked",self.back_clicked)
+		
+		self.main_window.connect("destroy",self.exit)
+		
+		
+		self.main_window.show_all()
+		
+		self.back_button.hide()
+		self.hibernate_button.set_visible(self.can_hibernate)
+		self.suspend_button.set_visible(self.can_suspend)
+		self.switch_button.set_visible(self.can_switch)
+		
+		GObject.threads_init()
+	
+		self.afer_lama();
+		Gtk.main()
+		
+		
+	#def start_gui
+
+	
+	def shutdown(self):
+		
+		print "Shutting down..."
+		
+		t=threading.Thread(target=self.sessman.RequestShutdown)
+		t.daemon=True
+		t.start()
+		
+	#def
+	
+	def reboot(self):
+		
+		print "Rebooting..."
+		
+		t=threading.Thread(target=self.sessman.RequestReboot)
+		t.daemon=True
+		t.start()
+		
+	#def
+	
+	
+	def suspend(self):
+		
+		print "Suspending..."
+		
+		t=threading.Thread(target=self.sysman.Suspend,args=(dbus.Boolean(True),))
+		t.daemon=True
+		t.start()
+		
+	#def suspend
+	
+	def hibernate(self):
+		
+		print "Hibernating..."
+		
+		t=threading.Thread(target=self.sysman.Hibernate,args=(dbus.Boolean(True),))
+		t.daemon=True
+		t.start()
+		
+	#def hibernating
+	
+	
+	def switch_user(self):
+		
+		print "Going back to lightdm..."
+		t=threading.Thread(target=self.displayman.SwitchToGreeter)
+		t.daemon=True
+		t.start()
+		
+	#def switch_user
+	
+	def lock(self):
+		
+		print "Locking screen..."
+		t=threading.Thread(target=self.lockman.Lock,args=('',))
+		t.daemon=True
+		t.start()
+	
+	#def lock
+	
+	
+	def logout(self):
+		
+		print "Logging out..."
+		
+		t=threading.Thread(target=self.sessman.Logout,args=(dbus.UInt32(1),))
+		t.daemon=True
+		t.start()
+		
+	#def logout
+	
+
+	def execute_now(self,widget,callback):
+
+		callback()
+		self.exit(None)
+		
+	#def execute_now
+
+	def back_clicked(self,widget):
+		
+		self.current_second=0
+		self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_RIGHT)
+		self.stack.set_visible_child_name("options")
+		self.back_button.hide()
+		self.cancel_button.show()
+		self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT)
+	
+	#def back_clicked
+		
+		
+	def lock_clicked(self,widget):
+		
+		self.lock()
+		self.exit(None)
+		
+	#def lock_clicked
+	
+	def logout_clicked(self,widget):
+		
+		self.stack.set_visible_child_name("action")
+		self.current_action_image.set_from_file(LOGOUT_RSRC)
+		self.current_action_label.set_text(_("Log out now"))
+		if self.handler_id!=None:
+			self.execute_now_button.disconnect(self.handler_id)
+		self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.logout)
+		GLib.timeout_add(10,self.wait_to_execute,_("Session will close in %s seconds..."),self.logout)
+		self.cancel_button.set_visible(False)
+		self.back_button.set_visible(True)
+		
+	#def logout_clicked
+
+        def afer_lama(self):
+
+                self.stack.set_visible_child_name("action")
+                self.current_action_image.set_from_file(LOGOUT_RSRC)
+                self.current_action_label.set_text(_("Log out now"))
+                if self.handler_id!=None:
+                        self.execute_now_button.disconnect(self.handler_id)
+                self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.logout)
+                GLib.timeout_add(10,self.wait_to_execute,_("Session will close in %s seconds..."),self.logout)
+                self.cancel_button.set_visible(False)
+                self.back_button.set_visible(True)
+
+	
+	
+	def switch_clicked(self,widget):
+		
+		self.switch_user()
+		self.exit(None)
+		
+		
+	#def switch_clicked
+	
+	def suspend_clicked(self,widget):
+		
+		self.stack.set_visible_child_name("action")
+		self.current_action_image.set_from_file(SUSPEND_RSRC)
+		self.current_action_label.set_text(_("Suspend now"))
+		if self.handler_id!=None:
+			self.execute_now_button.disconnect(self.handler_id)
+		self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.suspend)
+		GLib.timeout_add(10,self.wait_to_execute,_("System will suspend in %s seconds..."),self.suspend)
+		self.cancel_button.set_visible(False)
+		self.back_button.set_visible(True)
+		
+	#def suspend_clicked
+	
+	def hibernate_clicked(self,widget):
+		
+		self.stack.set_visible_child_name("action")
+		self.current_action_image.set_from_file(HIBERNATE_RSRC)
+		self.current_action_label.set_text(_("Hibernate now"))
+		if self.handler_id!=None:
+			self.execute_now_button.disconnect(self.handler_id)
+		self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.hibernate)
+		GLib.timeout_add(10,self.wait_to_execute,_("System will hibernate in %s seconds..."),self.hibernate)
+		self.cancel_button.set_visible(False)
+		self.back_button.set_visible(True)
+		
+	#def hibernate_clicked
+	
+	
+	def reboot_clicked(self,widget):
+		
+		self.stack.set_visible_child_name("action")
+		self.current_action_image.set_from_file(REBOOT_RSRC)
+		self.current_action_label.set_text(_("Reboot now"))
+		if self.handler_id!=None:
+			self.execute_now_button.disconnect(self.handler_id)
+		self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.reboot)
+		GLib.timeout_add(10,self.wait_to_execute,_("System will reboot in %s seconds..."),self.reboot)
+		self.cancel_button.set_visible(False)
+		self.back_button.set_visible(True)
+		
+	#def reboot_clicked
+	
+	def shutdown_clicked(self,widget):
+		
+		self.stack.set_visible_child_name("action")
+		self.current_action_image.set_from_file(SHUTDOWN_RSRC)
+		self.current_action_label.set_text(_("Shutdown now"))
+		if self.handler_id!=None:
+			self.execute_now_button.disconnect(self.handler_id)
+		self.handler_id=self.execute_now_button.connect("clicked",self.execute_now,self.shutdown)
+		GLib.timeout_add(10,self.wait_to_execute,_("System will shutdown in %s seconds..."),self.shutdown)
+		self.cancel_button.set_visible(False)
+		self.back_button.set_visible(True)
+		
+	#def shutdown_clicked
+	
+	def wait_to_execute(self,txt,callback):
+		
+		if self.stack.get_visible_child_name()=="options":
+			return False
+		
+		csecond=int(self.max_seconds+1-self.current_second)
+		self.progressbar.set_text(txt%(csecond))
+		self.progressbar.set_fraction(self.current_second/self.max_seconds)
+		self.current_second+=0.01
+		
+		if self.current_second>=self.max_seconds:
+			print "Executing callback..."
+			self.progressbar.set_text(txt%(0))
+			callback()
+			self.exit(None)
+			return False
+		
+		return True
+		
+	#def wait_to_execute
+	
+	def exit(self,widget):
+		
+		if widget==None:
+			time.sleep(1)
+		Gtk.main_quit()
+		
+	#def exit
+	
+#class LSM
+
+
+if __name__=="__main__":
+	
+	lsm=LliurexSessionManager()
+
+

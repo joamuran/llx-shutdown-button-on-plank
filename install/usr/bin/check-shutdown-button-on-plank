@@ -1,0 +1,4 @@
+#!/bin/bash
+
+[ -f ~/.config/plank/dock1/launchers/shutdown-botonaco.dockitem ] || cp /usr/share/shutdown-button-on-plank/shutdown-botonaco.dockitem  ~/.config/plank/dock1/launchers/shutdown-botonaco.dockitem
+
