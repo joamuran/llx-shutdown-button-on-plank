@@ -1,0 +1,15 @@
+Source: llx-shutdown-button-on-plank
+Section: misc
+Priority: optional
+Maintainer: joamuran <joamuran@gmail.com>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.3
+Homepage: https://github.com/joamuran/llx-shutdown-button-on-plank
+#Vcs-Git: git://git.debian.org/collab-maint/lliurex-guard.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/lliurex-guard.git;a=summary
+
+Package: llx-shutdown-button-on-plank
+Architecture: all
+Depends: ${misc:Depends}
+Description: Just a shutdown button
+ Just a shutdown button in plank.
